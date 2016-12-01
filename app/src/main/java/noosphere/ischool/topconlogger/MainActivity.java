@@ -1,27 +1,59 @@
 package noosphere.ischool.topconlogger;
 
-import android.bluetooth.BluetoothDevice;
+import android.app.Activity;
+import android.app.ProgressDialog;
+import android.bluetooth.BluetoothAdapter;
+import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.support.design.widget.FloatingActionButton;
-import android.support.design.widget.NavigationView;
-import android.support.design.widget.Snackbar;
-import android.support.v4.view.GravityCompat;
-import android.support.v4.widget.DrawerLayout;
-import android.support.v7.app.ActionBarDrawerToggle;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
-import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import com.ramimartin.bluetooth.activity.BluetoothActivity;
+import java.util.ArrayList;
+import java.util.List;
 
-import java.util.UUID;
+import app.akexorcist.bluetotohspp.library.BluetoothSPP;
+import app.akexorcist.bluetotohspp.library.BluetoothState;
+import app.akexorcist.bluetotohspp.library.DeviceList;
+import noosphere.ischool.topconlogger.io.ConsoleWriter;
+import noosphere.ischool.topconlogger.io.FileWriter;
+import noosphere.ischool.topconlogger.io.Writer;
 
 
-public class MainActivity  extends BluetoothActivity {
+public class MainActivity  extends AppCompatActivity {
 
+
+    public static final String EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING";
+    private FloatingActionButton starter;
+    private BluetoothSPP bt;
+    private List<Writer> writers;
+    private ProgressDialog progressDialog;
+
+
+    private boolean isRunning;
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        if (!bt.isBluetoothEnabled()) {
+            Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(intent, BluetoothState.REQUEST_ENABLE_BT);
+        } else {
+            if(!bt.isServiceAvailable()) {
+                bt.setupService();
+                bt.startService(BluetoothState.DEVICE_OTHER);
+            }
+        }
+        isRunning = false;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -29,84 +61,159 @@ public class MainActivity  extends BluetoothActivity {
 
         setContentView(R.layout.activity_main);
 
-        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
-        fab.setOnClickListener(new View.OnClickListener() {
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+
+        setUpBluetooth();
+
+        this.starter = (FloatingActionButton) findViewById(R.id.starter);
+        starter.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
+                if(isRunning) {
+                    isRunning = false;
+                    bt.send(CommandSet.STOP_RECEIVE_DATA, true);
+                    makeButtonStart();
+                    Toast.makeText(MainActivity.this,  R.string.data_stopped, Toast.LENGTH_LONG).show();
+                } else {
+                    buildWriters();
+                    bt.send(CommandSet.START_RECEIVE_DATA, true);
+                    makeButtonStop();
+                    Toast.makeText(MainActivity.this,  R.string.data_started, Toast.LENGTH_LONG).show();
+                    isRunning = true;
+                }
             }
         });
-
+        if(isRunning) {
+            buildWriters();
+            makeButtonStop();
+        } else {
+            makeButtonStart();
+        }
     }
 
-    @Override
-    public UUID myUUID() {
-        return UUID.fromString("00001101-0100-1000-8000-00805F9B34FB");
+    private void makeButtonStart() {
+        starter.setImageDrawable(getResources().getDrawable(R.drawable.start));
+        ColorStateList rippleColor = ContextCompat.getColorStateList(this, R.color.colorStart);
+        starter.setBackgroundTintList(rippleColor);
     }
 
-    @Override
-    public void onBluetoothDeviceFound(BluetoothDevice bluetoothDevice) {
-
+    private void makeButtonStop() {
+        starter.setImageDrawable(getResources().getDrawable(R.drawable.stop));
+        ColorStateList rippleColor = ContextCompat.getColorStateList(this, R.color.colorStop);
+        starter.setBackgroundTintList(rippleColor);
     }
 
-    @Override
-    public void onClientConnectionSuccess() {
+    private void buildWriters() {
+        writers = new ArrayList<>();
+        TextView data = (TextView) findViewById(R.id.data);
+        ScrollView scrollView = (ScrollView) findViewById(R.id.scroll);
+        writers.add(new ConsoleWriter(data, scrollView));
 
+        writers.add(new FileWriter());
     }
 
-    @Override
-    public void onClientConnectionFail() {
+    public void setUpBluetooth() {
+        bt = BluetoothWorker.getInstance(getApplication()).getBluetoothSPP();
+        bt.setBluetoothConnectionListener(new BluetoothSPP.BluetoothConnectionListener() {
+            @Override
+            public void onDeviceConnected(String name, String address) {
+                Toast.makeText(MainActivity.this, R.string.device_connected, Toast.LENGTH_LONG).show();
+                closeConnectionProgress();
+                starter.setVisibility(View.VISIBLE);
+            }
 
+            @Override
+            public void onDeviceDisconnected() {
+                Toast.makeText(MainActivity.this, R.string.device_disconnected, Toast.LENGTH_LONG).show();
+                closeConnectionProgress();
+                starter.setVisibility(View.GONE);
+                isRunning = false;
+                makeButtonStart();
+            }
+
+            @Override
+            public void onDeviceConnectionFailed() {
+                Toast.makeText(MainActivity.this, R.string.device_connection_failed, Toast.LENGTH_LONG).show();
+                starter.setVisibility(View.GONE);
+                closeConnectionProgress();
+                isRunning = false;
+                makeButtonStart();
+            }
+        });
+        bt.setOnDataReceivedListener(new BluetoothSPP.OnDataReceivedListener() {
+            @Override
+            public void onDataReceived(byte[] data, String message) {
+                for(Writer writer : writers) {
+                    writer.writeMessage(message);
+                }
+            }
+        });
     }
 
-    @Override
-    public void onServeurConnectionSuccess() {
-
+    private void showConnectionProgress(String deviceName) {
+        progressDialog = new ProgressDialog(this);
+        progressDialog.setMessage("Connecting to " + deviceName);
+        progressDialog.show();
     }
 
-    @Override
-    public void onServeurConnectionFail() {
-
+    private void closeConnectionProgress() {
+        if(progressDialog != null) {
+            progressDialog.dismiss();
+        }
     }
 
-    @Override
-    public void onBluetoothStartDiscovery() {
-
-    }
-
-    @Override
-    public void onBluetoothCommunicator(String s) {
-        Log.e("Message", s);
-    }
-
-    @Override
-    public void onBluetoothNotAviable() {
-
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if(requestCode == BluetoothState.REQUEST_CONNECT_DEVICE) {
+            if(resultCode == Activity.RESULT_OK)
+                if(data != null) {
+                    showConnectionProgress(data.getExtras().getString(BluetoothState.EXTRA_DEVICE_ADDRESS));
+                    bt.connect(data);
+                }
+        } else if(requestCode == BluetoothState.REQUEST_ENABLE_BT) {
+            if(resultCode == Activity.RESULT_OK) {
+                bt.setupService();
+                bt.startService(BluetoothState.DEVICE_ANDROID);
+            } else {
+                // Do something if user doesn't choose any device (Pressed back)
+            }
+        }
     }
 
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        // Inflate the menu; this adds items to the action bar if it is present.
         getMenuInflater().inflate(R.menu.main, menu);
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
         int id = item.getItemId();
-
-        //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
+        if (id == R.id.action_connect) {
+            Intent intent = new Intent(getApplicationContext(), DeviceList.class);
+            startActivityForResult(intent, BluetoothState.REQUEST_CONNECT_DEVICE);
             return true;
         }
-
         return super.onOptionsItemSelected(item);
     }
 
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        bt.stopService();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean(EXTRA_IS_RUNNING, isRunning);
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+        isRunning = savedInstanceState.getBoolean(EXTRA_IS_RUNNING);
+    }
 }

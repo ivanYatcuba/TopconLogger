@@ -11,10 +11,17 @@
     android:paddingTop="@dimen/activity_vertical_margin"
     app:layout_behavior="@string/appbar_scrolling_view_behavior"
     tools:context="noosphere.ischool.topconlogger.MainActivity"
-    tools:showIn="@layout/app_bar_main">
+    tools:showIn="@layout/activity_main">
 
-    <TextView
+    <ScrollView
+        android:id="@+id/scroll"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Hello World!"/>
+        android:layout_weight="1">
+        <TextView android:id="@+id/data"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:freezesText="true" />
+    </ScrollView>
+
 </RelativeLayout>
